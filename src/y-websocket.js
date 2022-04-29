@@ -24,6 +24,7 @@ const messageSync = 0
 const messageQueryAwareness = 3
 const messageAwareness = 1
 const messageAuth = 2
+const messageSubDocSync = 4
 
 /**
  *                       encoder,          decoder,          provider,          emitSynced, messageType
@@ -51,6 +52,20 @@ messageHandlers[messageAwareness] = (encoder, decoder, provider, emitSynced, mes
 messageHandlers[messageAuth] = (encoder, decoder, provider, emitSynced, messageType) => {
   authProtocol.readAuthMessage(decoder, provider.doc, permissionDeniedHandler)
 }
+
+messageHandlers[messageSubDocSync] = (encoder, decoder, provider, emitSynced, messageType) => {
+  const subDocID = decoding.readVarString(decoder)
+  console.log("Send subdocmessage: ", subDocID);
+  encoding.writeVarUint(encoder, messageSync)
+  const subDoc = provider.getSubDoc(subDocID)
+  if (subDoc) {
+    const syncMessageType = syncProtocol.readSyncMessage(decoder, encoder, subDoc, provider)
+    if (emitSynced && syncMessageType === syncProtocol.messageYjsSyncStep2) {
+      subDoc.emit('synced', [true])
+    }
+  }
+}
+
 
 // @todo - this should depend on awareness.outdatedTime
 const messageReconnectTimeout = 30000
@@ -233,6 +248,11 @@ export class WebsocketProvider extends Observable {
     this.shouldConnect = connect
 
     /**
+     * @type {Map<string, Y.Doc>}
+     */
+    this.subdocs = new Map()
+
+    /**
      * @type {number}
      */
     this._resyncInterval = 0
@@ -273,6 +293,87 @@ export class WebsocketProvider extends Observable {
         broadcastMessage(this, encoding.toUint8Array(encoder))
       }
     }
+
+    /**
+     * When dealing with subdocs, it is possible to race the websocket connection
+     * where we are ready to load subdocuments but the connection is not yet ready to send
+     * This function is just a quick and dirty retry function for when we can't be sure
+     * if the connection is present
+     * @param {any} message
+     * @param {Function} callback
+     */
+    this.send = function (message, callback) {
+      const ws = this.ws
+      this.waitForConnection(function () {
+        // @ts-ignore
+        ws.send(message);
+        if (typeof callback !== 'undefined') {
+          callback();
+        }
+      }, 1000);
+    };
+
+    /**
+     *
+     * @param {Function} callback
+     * @param {Number} interval
+     */
+    this.waitForConnection = function (callback, interval) {
+      const ws = this.ws
+      if (ws && ws.readyState === 1) {
+        callback();
+      } else {
+        var that = this;
+        // optional: implement backoff for interval here
+        setTimeout(function () {
+          that.waitForConnection(callback, interval);
+        }, interval);
+      }
+    };
+
+    this._getSubDocUpdateHandler = (id) => {
+      /**
+       *
+       * @param {Uint8Array} update
+       * @param {WebsocketProvider} origin
+       */
+      const updateHandler = (update, origin) => {
+          const encoder = encoding.createEncoder()
+          encoding.writeVarUint(encoder, messageSubDocSync)
+          encoding.writeVarString(encoder, id)
+          syncProtocol.writeUpdate(encoder, update)
+          broadcastMessage(this, encoding.toUint8Array(encoder))
+      }
+      return updateHandler
+    }
+
+    /**
+     * Watch for subdoc events and reconcile local state
+     */
+    this.doc.on('subdocs', ({ added, removed, loaded }) => {
+      added.forEach(subdoc => {
+        console.log("Add subdoc: ", added);
+        this.subdocs.set(subdoc.guid, subdoc)
+      })
+      removed.forEach(subdoc => {
+        subdoc.off('update', this._getSubDocUpdateHandler(subdoc.guid))
+        this.subdocs.delete(subdoc.guid)
+      })
+      loaded.forEach(subdoc => {
+        // always send sync step 1 when connected
+        const encoder = encoding.createEncoder()
+        encoding.writeVarUint(encoder, messageSubDocSync)
+        encoding.writeVarString(encoder, subdoc.guid)
+        syncProtocol.writeSyncStep1(encoder, subdoc)
+        if (this.ws) {
+          this.send(encoding.toUint8Array(encoder), () => {
+            subdoc.on('update', this._getSubDocUpdateHandler(subdoc.guid))
+          })
+        }
+      })
+    })
+
+
     this.doc.on('update', this._updateHandler)
     /**
      * @param {any} changed
@@ -319,6 +420,14 @@ export class WebsocketProvider extends Observable {
       this.emit('synced', [state])
       this.emit('sync', [state])
     }
+  }
+
+  /**
+   *
+   * @param {string} id
+   */
+  getSubDoc(id) {
+    return this.subdocs.get(id)
   }
 
   destroy () {

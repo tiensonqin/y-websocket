@@ -71,6 +71,7 @@ exports.docs = docs
 const messageSync = 0
 const messageAwareness = 1
 // const messageAuth = 2
+const messageSubDocSync = 4
 
 /**
  * @param {Uint8Array} update
@@ -79,7 +80,14 @@ const messageAwareness = 1
  */
 const updateHandler = (update, origin, doc) => {
   const encoder = encoding.createEncoder()
-  encoding.writeVarUint(encoder, messageSync)
+
+  if (doc.isSubdoc) {
+    encoding.writeVarUint(encoder, messageSubDocSync)
+    encoding.writeVarString(encoder, doc.guid)
+  } else {
+    encoding.writeVarUint(encoder, messageSync)
+  }
+
   syncProtocol.writeUpdate(encoder, update)
   const message = encoding.toUint8Array(encoder)
   doc.conns.forEach((_, conn) => send(doc, conn, message))
@@ -93,11 +101,15 @@ class WSSharedDoc extends Y.Doc {
     super({ gc: gcEnabled })
     this.name = name
     this.mux = mutex.createMutex()
+    this.isSubdoc = false
     /**
      * Maps from conn to set of controlled user ids. Delete all user ids from awareness when this conn is closed
      * @type {Map<Object, Set<number>>}
      */
     this.conns = new Map()
+
+    this.subdocuments = new Map()
+
     /**
      * @type {awarenessProtocol.Awareness}
      */
@@ -135,6 +147,14 @@ class WSSharedDoc extends Y.Doc {
       ))
     }
   }
+
+  loadSubdoc(subdocId) {
+    let subdoc = getYDoc(subdocId)
+    subdoc.isSubdoc = true
+    this.subdocuments.set(subdocId, subdoc)
+    return subdoc
+    // or return an already created subdoc
+  }
 }
 
 /**
@@ -166,10 +186,21 @@ const messageListener = (conn, doc, message) => {
     const encoder = encoding.createEncoder()
     const decoder = decoding.createDecoder(message)
     const messageType = decoding.readVarUint(decoder)
+    console.log("messagetype: ", messageType);
     switch (messageType) {
       case messageSync:
         encoding.writeVarUint(encoder, messageSync)
         syncProtocol.readSyncMessage(decoder, encoder, doc, null)
+        if (encoding.length(encoder) > 1) {
+          send(doc, conn, encoding.toUint8Array(encoder))
+        }
+        break
+      case messageSubDocSync:
+        let subdocId = decoding.readVarString(decoder)
+        let subdoc = doc.loadSubdoc(subdocId)
+        // now that we have the subdoc, the sync process becomes identical to the standard case.
+        // be sure to broadcast any changes uses your subsync message type
+        syncProtocol.readSyncMessage(decoder, encoder, subdoc, null)
         if (encoding.length(encoder) > 1) {
           send(doc, conn, encoding.toUint8Array(encoder))
         }
