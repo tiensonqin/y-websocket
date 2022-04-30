@@ -80,10 +80,11 @@ const messageSubDocSync = 4
  */
 const updateHandler = (update, origin, doc) => {
   const encoder = encoding.createEncoder()
+  console.log("Update ", doc.name, ", isSubdoc: ", doc.isSubdoc)
 
   if (doc.isSubdoc) {
     encoding.writeVarUint(encoder, messageSubDocSync)
-    encoding.writeVarString(encoder, doc.guid)
+    encoding.writeVarString(encoder, doc.name)
   } else {
     encoding.writeVarUint(encoder, messageSync)
   }
@@ -107,8 +108,6 @@ class WSSharedDoc extends Y.Doc {
      * @type {Map<Object, Set<number>>}
      */
     this.conns = new Map()
-
-    this.subdocuments = new Map()
 
     /**
      * @type {awarenessProtocol.Awareness}
@@ -149,11 +148,13 @@ class WSSharedDoc extends Y.Doc {
   }
 
   loadSubdoc(subdocId) {
-    let subdoc = getYDoc(subdocId)
-    subdoc.isSubdoc = true
-    this.subdocuments.set(subdocId, subdoc)
-    return subdoc
-    // or return an already created subdoc
+    if (docs.get(subdocId)) {
+      return docs.get(subdocId)
+    } else {
+      let subdoc = getYDoc(subdocId)
+      subdoc.isSubdoc = true
+      return subdoc
+    }
   }
 }
 
@@ -197,13 +198,17 @@ const messageListener = (conn, doc, message) => {
         break
       case messageSubDocSync:
         let subdocId = decoding.readVarString(decoder)
+        console.log("received subdoc sync request", subdocId);
         let subdoc = doc.loadSubdoc(subdocId)
-        // now that we have the subdoc, the sync process becomes identical to the standard case.
-        // be sure to broadcast any changes uses your subsync message type
-        syncProtocol.readSyncMessage(decoder, encoder, subdoc, null)
-        if (encoding.length(encoder) > 1) {
-          send(doc, conn, encoding.toUint8Array(encoder))
+        if (subdoc) {
+          encoding.writeVarUint(encoder, messageSubDocSync)
+          encoding.writeVarString(encoder, subdocId)
+          syncProtocol.readSyncMessage(decoder, encoder, doc, null)
+          if (encoding.length(encoder) > 1) {
+            send(doc, conn, encoding.toUint8Array(encoder))
+          }
         }
+
         break
       case messageAwareness: {
         awarenessProtocol.applyAwarenessUpdate(doc.awareness, decoding.readVarUint8Array(decoder), conn)

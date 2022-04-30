@@ -55,8 +55,9 @@ messageHandlers[messageAuth] = (encoder, decoder, provider, emitSynced, messageT
 
 messageHandlers[messageSubDocSync] = (encoder, decoder, provider, emitSynced, messageType) => {
   const subDocID = decoding.readVarString(decoder)
-  console.log("Send subdocmessage: ", subDocID);
-  encoding.writeVarUint(encoder, messageSync)
+  console.log("received subdocmessage: ", subDocID);
+  encoding.writeVarUint(encoder, messageSubDocSync)
+  encoding.writeVarString(encoder, subDocID)
   const subDoc = provider.getSubDoc(subDocID)
   if (subDoc) {
     const syncMessageType = syncProtocol.readSyncMessage(decoder, encoder, subDoc, provider)
@@ -177,6 +178,24 @@ const broadcastMessage = (provider, buf) => {
   }
 }
 
+export const getSubDocUpdateHandler = (provider, id) => {
+  /**
+   *
+   * @param {Uint8Array} update
+   * @param {WebsocketProvider} origin
+   */
+  const updateHandler = (update, origin) => {
+    console.log("subdoc update")
+    Y.logUpdate(update);
+    const encoder = encoding.createEncoder()
+    encoding.writeVarUint(encoder, messageSubDocSync)
+    encoding.writeVarString(encoder, id)
+    syncProtocol.writeUpdate(encoder, update)
+    broadcastMessage(provider, encoding.toUint8Array(encoder))
+  }
+  return updateHandler
+}
+
 /**
  * Websocket Provider for Yjs. Creates a websocket connection to sync the shared document.
  * The document name is attached to the provided url. I.e. the following example
@@ -287,7 +306,11 @@ export class WebsocketProvider extends Observable {
      */
     this._updateHandler = (update, origin) => {
       if (origin !== this) {
+        console.log("Received update")
+
         const encoder = encoding.createEncoder()
+        console.log("Non subdoc received update")
+        Y.logUpdate(update);
         encoding.writeVarUint(encoder, messageSync)
         syncProtocol.writeUpdate(encoder, update)
         broadcastMessage(this, encoding.toUint8Array(encoder))
@@ -331,45 +354,32 @@ export class WebsocketProvider extends Observable {
       }
     };
 
-    this._getSubDocUpdateHandler = (id) => {
-      /**
-       *
-       * @param {Uint8Array} update
-       * @param {WebsocketProvider} origin
-       */
-      const updateHandler = (update, origin) => {
-          const encoder = encoding.createEncoder()
-          encoding.writeVarUint(encoder, messageSubDocSync)
-          encoding.writeVarString(encoder, id)
-          syncProtocol.writeUpdate(encoder, update)
-          broadcastMessage(this, encoding.toUint8Array(encoder))
-      }
-      return updateHandler
-    }
-
     /**
      * Watch for subdoc events and reconcile local state
      */
     this.doc.on('subdocs', ({ added, removed, loaded }) => {
       added.forEach(subdoc => {
-        console.log("Add subdoc: ", added);
         this.subdocs.set(subdoc.guid, subdoc)
+        console.log("subdoc added")
+        console.dir(subdoc)
       })
       removed.forEach(subdoc => {
-        subdoc.off('update', this._getSubDocUpdateHandler(subdoc.guid))
+        subdoc.off('update', getSubDocUpdateHandler(this, subdoc.guid))
         this.subdocs.delete(subdoc.guid)
       })
       loaded.forEach(subdoc => {
-        // always send sync step 1 when connected
-        const encoder = encoding.createEncoder()
-        encoding.writeVarUint(encoder, messageSubDocSync)
-        encoding.writeVarString(encoder, subdoc.guid)
-        syncProtocol.writeSyncStep1(encoder, subdoc)
-        if (this.ws) {
-          this.send(encoding.toUint8Array(encoder), () => {
-            subdoc.on('update', this._getSubDocUpdateHandler(subdoc.guid))
-          })
-        }
+        // console.log('loaded', subdoc.guid)
+        // // always send sync step 1 when connected
+        // const encoder = encoding.createEncoder()
+        // encoding.writeVarUint(encoder, messageSubDocSync)
+        // encoding.writeVarString(encoder, subdoc.guid)
+        // syncProtocol.writeSyncStep1(encoder, subdoc)
+        // if (this.ws) {
+        //   console.log("send encoder")
+        //   this.send(encoding.toUint8Array(encoder), () => {
+        //     subdoc.on('update', getSubDocUpdateHandler(this, subdoc.guid))
+        //   })
+        // }
       })
     })
 
