@@ -55,9 +55,8 @@ messageHandlers[messageAuth] = (encoder, decoder, provider, emitSynced, messageT
 
 messageHandlers[messageSubDocSync] = (encoder, decoder, provider, emitSynced, messageType) => {
   const subDocID = decoding.readVarString(decoder)
-  console.log("received subdocmessage: ", subDocID);
-  encoding.writeVarUint(encoder, messageSubDocSync)
-  encoding.writeVarString(encoder, subDocID)
+  encoding.writeVarUint(encoder, messageSync)
+  // encoding.writeVarString(encoder, subDocID)
   const subDoc = provider.getSubDoc(subDocID)
   if (subDoc) {
     const syncMessageType = syncProtocol.readSyncMessage(decoder, encoder, subDoc, provider)
@@ -360,26 +359,22 @@ export class WebsocketProvider extends Observable {
     this.doc.on('subdocs', ({ added, removed, loaded }) => {
       added.forEach(subdoc => {
         this.subdocs.set(subdoc.guid, subdoc)
-        console.log("subdoc added")
-        console.dir(subdoc)
       })
       removed.forEach(subdoc => {
         subdoc.off('update', getSubDocUpdateHandler(this, subdoc.guid))
         this.subdocs.delete(subdoc.guid)
       })
       loaded.forEach(subdoc => {
-        // console.log('loaded', subdoc.guid)
-        // // always send sync step 1 when connected
-        // const encoder = encoding.createEncoder()
-        // encoding.writeVarUint(encoder, messageSubDocSync)
-        // encoding.writeVarString(encoder, subdoc.guid)
-        // syncProtocol.writeSyncStep1(encoder, subdoc)
-        // if (this.ws) {
-        //   console.log("send encoder")
-        //   this.send(encoding.toUint8Array(encoder), () => {
-        //     subdoc.on('update', getSubDocUpdateHandler(this, subdoc.guid))
-        //   })
-        // }
+        // always send sync step 1 when connected
+        const encoder = encoding.createEncoder()
+        encoding.writeVarUint(encoder, messageSubDocSync)
+        encoding.writeVarString(encoder, subdoc.guid)
+        syncProtocol.writeSyncStep1(encoder, subdoc)
+        if (this.ws) {
+          this.send(encoding.toUint8Array(encoder), () => {
+            subdoc.on('update', getSubDocUpdateHandler(this, subdoc.guid))
+          })
+        }
       })
     })
 

@@ -80,12 +80,13 @@ const messageSubDocSync = 4
  */
 const updateHandler = (update, origin, doc) => {
   const encoder = encoding.createEncoder()
-  console.log("Update ", doc.name, ", isSubdoc: ", doc.isSubdoc)
 
   if (doc.isSubdoc) {
+    console.log("Received subdoc update")
     encoding.writeVarUint(encoder, messageSubDocSync)
     encoding.writeVarString(encoder, doc.name)
   } else {
+    console.log("Received doc update")
     encoding.writeVarUint(encoder, messageSync)
   }
 
@@ -147,12 +148,14 @@ class WSSharedDoc extends Y.Doc {
     }
   }
 
-  loadSubdoc(subdocId) {
+  loadSubdoc(subdocId, conn) {
     if (docs.get(subdocId)) {
       return docs.get(subdocId)
     } else {
       let subdoc = getYDoc(subdocId)
       subdoc.isSubdoc = true
+      subdoc.conns.set(conn, new Set())
+
       return subdoc
     }
   }
@@ -187,7 +190,6 @@ const messageListener = (conn, doc, message) => {
     const encoder = encoding.createEncoder()
     const decoder = decoding.createDecoder(message)
     const messageType = decoding.readVarUint(decoder)
-    console.log("messagetype: ", messageType);
     switch (messageType) {
       case messageSync:
         encoding.writeVarUint(encoder, messageSync)
@@ -197,13 +199,11 @@ const messageListener = (conn, doc, message) => {
         }
         break
       case messageSubDocSync:
-        let subdocId = decoding.readVarString(decoder)
-        console.log("received subdoc sync request", subdocId);
-        let subdoc = doc.loadSubdoc(subdocId)
+        const subdocId = decoding.readVarString(decoder)
+        let subdoc = doc.loadSubdoc(subdocId, conn)
         if (subdoc) {
-          encoding.writeVarUint(encoder, messageSubDocSync)
-          encoding.writeVarString(encoder, subdocId)
-          syncProtocol.readSyncMessage(decoder, encoder, doc, null)
+          encoding.writeVarUint(encoder, messageSync)
+          syncProtocol.readSyncMessage(decoder, encoder, subdoc, null)
           if (encoding.length(encoder) > 1) {
             send(doc, conn, encoding.toUint8Array(encoder))
           }
