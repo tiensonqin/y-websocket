@@ -177,7 +177,7 @@ const broadcastMessage = (provider, buf) => {
   }
 }
 
-export const getSubDocUpdateHandler = (provider, id) => {
+export const getSubDocUpdateHandler = (provider, doc) => {
   /**
    *
    * @param {Uint8Array} update
@@ -185,10 +185,9 @@ export const getSubDocUpdateHandler = (provider, id) => {
    */
   const updateHandler = (update, origin) => {
     console.log("subdoc update")
-    Y.logUpdate(update);
     const encoder = encoding.createEncoder()
     encoding.writeVarUint(encoder, messageSubDocSync)
-    encoding.writeVarString(encoder, id)
+    encoding.writeVarString(encoder, doc.guid)
     syncProtocol.writeUpdate(encoder, update)
     broadcastMessage(provider, encoding.toUint8Array(encoder))
   }
@@ -365,6 +364,8 @@ export class WebsocketProvider extends Observable {
         this.subdocs.delete(subdoc.guid)
       })
       loaded.forEach(subdoc => {
+        console.log("loaded subdoc", subdoc.guid)
+        console.dir(subdoc)
         // always send sync step 1 when connected
         const encoder = encoding.createEncoder()
         encoding.writeVarUint(encoder, messageSubDocSync)
@@ -372,7 +373,7 @@ export class WebsocketProvider extends Observable {
         syncProtocol.writeSyncStep1(encoder, subdoc)
         if (this.ws) {
           this.send(encoding.toUint8Array(encoder), () => {
-            subdoc.on('update', getSubDocUpdateHandler(this, subdoc.guid))
+            subdoc.on('update', getSubDocUpdateHandler(this, subdoc))
           })
         }
       })

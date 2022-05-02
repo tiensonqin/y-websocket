@@ -149,13 +149,14 @@ class WSSharedDoc extends Y.Doc {
   }
 
   loadSubdoc(subdocId, conn) {
-    if (docs.get(subdocId)) {
-      return docs.get(subdocId)
+    let subdoc = docs.get(subdocId)
+    if (subdoc) {
+      subdoc.conns.set(conn, new Set())
+      return subdoc
     } else {
       let subdoc = getYDoc(subdocId)
       subdoc.isSubdoc = true
       subdoc.conns.set(conn, new Set())
-
       return subdoc
     }
   }
