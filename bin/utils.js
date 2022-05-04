@@ -82,11 +82,9 @@ const updateHandler = (update, origin, doc) => {
   const encoder = encoding.createEncoder()
 
   if (doc.isSubdoc) {
-    console.log("Received subdoc update")
     encoding.writeVarUint(encoder, messageSubDocSync)
     encoding.writeVarString(encoder, doc.name)
   } else {
-    console.log("Received doc update")
     encoding.writeVarUint(encoder, messageSync)
   }
 
@@ -192,7 +190,7 @@ const messageListener = (conn, doc, message) => {
     const decoder = decoding.createDecoder(message)
     const messageType = decoding.readVarUint(decoder)
     switch (messageType) {
-      case messageSync:
+    case messageSync:
         encoding.writeVarUint(encoder, messageSync)
         syncProtocol.readSyncMessage(decoder, encoder, doc, null)
         if (encoding.length(encoder) > 1) {
@@ -203,7 +201,8 @@ const messageListener = (conn, doc, message) => {
         const subdocId = decoding.readVarString(decoder)
         let subdoc = doc.loadSubdoc(subdocId, conn)
         if (subdoc) {
-          encoding.writeVarUint(encoder, messageSync)
+          encoding.writeVarUint(encoder, messageSubDocSync)
+          encoding.writeVarString(encoder, subdocId)
           syncProtocol.readSyncMessage(decoder, encoder, subdoc, null)
           if (encoding.length(encoder) > 1) {
             send(doc, conn, encoding.toUint8Array(encoder))

@@ -54,13 +54,16 @@ messageHandlers[messageAuth] = (encoder, decoder, provider, emitSynced, messageT
 }
 
 messageHandlers[messageSubDocSync] = (encoder, decoder, provider, emitSynced, messageType) => {
+  console.log("received messageSubDocSync")
   const subDocID = decoding.readVarString(decoder)
-  encoding.writeVarUint(encoder, messageSync)
-  // encoding.writeVarString(encoder, subDocID)
+  encoding.writeVarUint(encoder, messageSubDocSync)
+  encoding.writeVarString(encoder, subDocID)
+
   const subDoc = provider.getSubDoc(subDocID)
   if (subDoc) {
     const syncMessageType = syncProtocol.readSyncMessage(decoder, encoder, subDoc, provider)
     if (emitSynced && syncMessageType === syncProtocol.messageYjsSyncStep2) {
+      console.log("synced", subDocID)
       subDoc.emit('synced', [true])
     }
   }
@@ -194,6 +197,7 @@ export const getSubDocUpdateHandler = (provider, doc) => {
   return updateHandler
 }
 
+
 /**
  * Websocket Provider for Yjs. Creates a websocket connection to sync the shared document.
  * The document name is attached to the provided url. I.e. the following example
@@ -267,7 +271,7 @@ export class WebsocketProvider extends Observable {
     /**
      * @type {Map<string, Y.Doc>}
      */
-    this.subdocs = new Map()
+    this.subdocuments = new Map()
 
     /**
      * @type {number}
@@ -304,11 +308,9 @@ export class WebsocketProvider extends Observable {
      */
     this._updateHandler = (update, origin) => {
       if (origin !== this) {
-        console.log("Received update")
-
+        console.log("doc updated")
+        Y.logUpdate(update)
         const encoder = encoding.createEncoder()
-        console.log("Non subdoc received update")
-        Y.logUpdate(update);
         encoding.writeVarUint(encoder, messageSync)
         syncProtocol.writeUpdate(encoder, update)
         broadcastMessage(this, encoding.toUint8Array(encoder))
@@ -357,15 +359,15 @@ export class WebsocketProvider extends Observable {
      */
     this.doc.on('subdocs', ({ added, removed, loaded }) => {
       added.forEach(subdoc => {
-        this.subdocs.set(subdoc.guid, subdoc)
+        console.log("added subdoc", subdoc.guid)
+        this.subdocuments.set(subdoc.guid, subdoc)
       })
       removed.forEach(subdoc => {
         subdoc.off('update', getSubDocUpdateHandler(this, subdoc.guid))
-        this.subdocs.delete(subdoc.guid)
+        this.subdocuments.delete(subdoc.guid)
       })
       loaded.forEach(subdoc => {
         console.log("loaded subdoc", subdoc.guid)
-        console.dir(subdoc)
         // always send sync step 1 when connected
         const encoder = encoding.createEncoder()
         encoding.writeVarUint(encoder, messageSubDocSync)
@@ -433,7 +435,13 @@ export class WebsocketProvider extends Observable {
    * @param {string} id
    */
   getSubDoc(id) {
-    return this.subdocs.get(id)
+    let subDoc = this.subdocuments.get(id)
+    return subDoc
+  }
+
+  setSubDoc(doc) {
+    this.subdocuments.set(doc.guid, doc)
+    return true
   }
 
   destroy () {
