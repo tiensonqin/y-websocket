@@ -56,19 +56,16 @@ messageHandlers[messageAuth] = (encoder, decoder, provider, emitSynced, messageT
 messageHandlers[messageSubDocSync] = (encoder, decoder, provider, emitSynced, messageType) => {
   console.log("received messageSubDocSync")
   const subDocID = decoding.readVarString(decoder)
-  encoding.writeVarUint(encoder, messageSubDocSync)
-  encoding.writeVarString(encoder, subDocID)
-
   const subDoc = provider.getSubDoc(subDocID)
+
   if (subDoc) {
+    encoding.writeVarUint(encoder, messageSync)
     const syncMessageType = syncProtocol.readSyncMessage(decoder, encoder, subDoc, provider)
     if (emitSynced && syncMessageType === syncProtocol.messageYjsSyncStep2) {
-      console.log("synced", subDocID)
       subDoc.emit('synced', [true])
     }
   }
 }
-
 
 // @todo - this should depend on awareness.outdatedTime
 const messageReconnectTimeout = 30000
@@ -180,7 +177,7 @@ const broadcastMessage = (provider, buf) => {
   }
 }
 
-export const getSubDocUpdateHandler = (provider, doc) => {
+export const subDocUpdateHandler = (provider, doc) => {
   /**
    *
    * @param {Uint8Array} update
@@ -188,6 +185,7 @@ export const getSubDocUpdateHandler = (provider, doc) => {
    */
   const updateHandler = (update, origin) => {
     console.log("subdoc update")
+    Y.logUpdate(update)
     const encoder = encoding.createEncoder()
     encoding.writeVarUint(encoder, messageSubDocSync)
     encoding.writeVarString(encoder, doc.guid)
@@ -308,8 +306,6 @@ export class WebsocketProvider extends Observable {
      */
     this._updateHandler = (update, origin) => {
       if (origin !== this) {
-        console.log("doc updated")
-        Y.logUpdate(update)
         const encoder = encoding.createEncoder()
         encoding.writeVarUint(encoder, messageSync)
         syncProtocol.writeUpdate(encoder, update)
@@ -363,7 +359,7 @@ export class WebsocketProvider extends Observable {
         this.subdocuments.set(subdoc.guid, subdoc)
       })
       removed.forEach(subdoc => {
-        subdoc.off('update', getSubDocUpdateHandler(this, subdoc.guid))
+        subdoc.off('update', subDocUpdateHandler(this, subdoc.guid))
         this.subdocuments.delete(subdoc.guid)
       })
       loaded.forEach(subdoc => {
@@ -375,7 +371,7 @@ export class WebsocketProvider extends Observable {
         syncProtocol.writeSyncStep1(encoder, subdoc)
         if (this.ws) {
           this.send(encoding.toUint8Array(encoder), () => {
-            subdoc.on('update', getSubDocUpdateHandler(this, subdoc))
+            subdoc.on('update', subDocUpdateHandler(this, subdoc))
           })
         }
       })

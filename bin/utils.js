@@ -90,6 +90,8 @@ const updateHandler = (update, origin, doc) => {
 
   syncProtocol.writeUpdate(encoder, update)
   const message = encoding.toUint8Array(encoder)
+
+  // TODO: no need to send to the connection which received the update
   doc.conns.forEach((_, conn) => send(doc, conn, message))
 }
 
@@ -199,16 +201,16 @@ const messageListener = (conn, doc, message) => {
         break
       case messageSubDocSync:
         const subdocId = decoding.readVarString(decoder)
+        console.log("subdocsync (load or update) ", subdocId)
         let subdoc = doc.loadSubdoc(subdocId, conn)
         if (subdoc) {
           encoding.writeVarUint(encoder, messageSubDocSync)
           encoding.writeVarString(encoder, subdocId)
           syncProtocol.readSyncMessage(decoder, encoder, subdoc, null)
           if (encoding.length(encoder) > 1) {
-            send(doc, conn, encoding.toUint8Array(encoder))
+            send(subdoc, conn, encoding.toUint8Array(encoder))
           }
         }
-
         break
       case messageAwareness: {
         awarenessProtocol.applyAwarenessUpdate(doc.awareness, decoding.readVarUint8Array(decoder), conn)
