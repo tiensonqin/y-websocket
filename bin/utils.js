@@ -72,6 +72,7 @@ const messageSync = 0
 const messageAwareness = 1
 // const messageAuth = 2
 const messageSubDocSync = 4
+const messageSubDocSyncUpdate = 5
 
 /**
  * @param {Uint8Array} update
@@ -91,9 +92,19 @@ const updateHandler = (update, origin, doc) => {
   syncProtocol.writeUpdate(encoder, update)
   const message = encoding.toUint8Array(encoder)
 
-  // TODO: no need to send to the connection which received the update
-  doc.conns.forEach((_, conn) => send(doc, conn, message))
+
+  // TODO: no need to send to the connection that received this update
+  doc.conns.forEach((ids, conn) => {
+    send(doc, conn, message)
+  })
 }
+
+const getUniqueID = function () {
+  function s4() {
+    return Math.floor((1 + Math.random()) * 0x10000).toString(16).substring(1);
+  }
+  return s4() + s4() + '-' + s4();
+};
 
 class WSSharedDoc extends Y.Doc {
   /**
@@ -149,6 +160,10 @@ class WSSharedDoc extends Y.Doc {
   }
 
   loadSubdoc(subdocId, conn) {
+    if (!conn.id) {
+      conn.id = getUniqueID()
+    }
+
     let subdoc = docs.get(subdocId)
     if (subdoc) {
       subdoc.conns.set(conn, new Set())
@@ -193,29 +208,40 @@ const messageListener = (conn, doc, message) => {
     const messageType = decoding.readVarUint(decoder)
     switch (messageType) {
     case messageSync:
-        encoding.writeVarUint(encoder, messageSync)
-        syncProtocol.readSyncMessage(decoder, encoder, doc, null)
-        if (encoding.length(encoder) > 1) {
-          send(doc, conn, encoding.toUint8Array(encoder))
-        }
-        break
-      case messageSubDocSync:
-        const subdocId = decoding.readVarString(decoder)
-        console.log("subdocsync (load or update) ", subdocId)
-        let subdoc = doc.loadSubdoc(subdocId, conn)
-        if (subdoc) {
-          encoding.writeVarUint(encoder, messageSubDocSync)
-          encoding.writeVarString(encoder, subdocId)
-          syncProtocol.readSyncMessage(decoder, encoder, subdoc, null)
-          if (encoding.length(encoder) > 1) {
-            send(subdoc, conn, encoding.toUint8Array(encoder))
-          }
-        }
-        break
-      case messageAwareness: {
-        awarenessProtocol.applyAwarenessUpdate(doc.awareness, decoding.readVarUint8Array(decoder), conn)
-        break
+      encoding.writeVarUint(encoder, messageSync)
+      syncProtocol.readSyncMessage(decoder, encoder, doc, null)
+      if (encoding.length(encoder) > 1) {
+        send(doc, conn, encoding.toUint8Array(encoder))
       }
+      break
+    case messageSubDocSync:
+      const subdocId = decoding.readVarString(decoder)
+      let subdoc = doc.loadSubdoc(subdocId, conn)
+      if (subdoc) {
+        encoding.writeVarUint(encoder, messageSubDocSync)
+        encoding.writeVarString(encoder, subdocId)
+        syncProtocol.readSyncMessage(decoder, encoder, subdoc, null)
+        if (encoding.length(encoder) > 1) {
+          send(subdoc, conn, encoding.toUint8Array(encoder))
+        }
+      }
+      break
+    case messageSubDocSyncUpdate:
+      const id = decoding.readVarString(decoder)
+      let newdoc = doc.loadSubdoc(id, conn)
+      if (newdoc) {
+        encoding.writeVarUint(encoder, messageSubDocSyncUpdate)
+        encoding.writeVarString(encoder, id)
+        syncProtocol.readSyncMessage(decoder, encoder, newdoc, null)
+        if (encoding.length(encoder) > 1) {
+          send(newdoc, conn, encoding.toUint8Array(encoder))
+        }
+      }
+      break
+    case messageAwareness: {
+      awarenessProtocol.applyAwarenessUpdate(doc.awareness, decoding.readVarUint8Array(decoder), conn)
+      break
+    }
     }
   } catch (err) {
     console.error(err)

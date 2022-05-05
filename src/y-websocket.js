@@ -25,6 +25,7 @@ const messageQueryAwareness = 3
 const messageAwareness = 1
 const messageAuth = 2
 const messageSubDocSync = 4
+const messageSubDocSyncUpdate = 5
 
 /**
  *                       encoder,          decoder,          provider,          emitSynced, messageType
@@ -54,7 +55,6 @@ messageHandlers[messageAuth] = (encoder, decoder, provider, emitSynced, messageT
 }
 
 messageHandlers[messageSubDocSync] = (encoder, decoder, provider, emitSynced, messageType) => {
-  console.log("received messageSubDocSync")
   const subDocID = decoding.readVarString(decoder)
   const subDoc = provider.getSubDoc(subDocID)
 
@@ -64,8 +64,22 @@ messageHandlers[messageSubDocSync] = (encoder, decoder, provider, emitSynced, me
     if (emitSynced && syncMessageType === syncProtocol.messageYjsSyncStep2) {
       subDoc.emit('synced', [true])
     }
+  } else {
+    console.error("subdoc not found", subDocID)
   }
 }
+
+messageHandlers[messageSubDocSyncUpdate] = (encoder, decoder, provider, emitSynced, messageType) => {
+  const subDocID = decoding.readVarString(decoder)
+  const subDoc = provider.getSubDoc(subDocID)
+
+  if (subDoc) {
+    subDoc.emit('updated', [true])
+  } else {
+    console.error("subdoc not found", subDocID)
+  }
+}
+
 
 // @todo - this should depend on awareness.outdatedTime
 const messageReconnectTimeout = 30000
@@ -184,10 +198,8 @@ export const subDocUpdateHandler = (provider, doc) => {
    * @param {WebsocketProvider} origin
    */
   const updateHandler = (update, origin) => {
-    console.log("subdoc update")
-    Y.logUpdate(update)
     const encoder = encoding.createEncoder()
-    encoding.writeVarUint(encoder, messageSubDocSync)
+    encoding.writeVarUint(encoder, messageSubDocSyncUpdate)
     encoding.writeVarString(encoder, doc.guid)
     syncProtocol.writeUpdate(encoder, update)
     broadcastMessage(provider, encoding.toUint8Array(encoder))
@@ -355,7 +367,6 @@ export class WebsocketProvider extends Observable {
      */
     this.doc.on('subdocs', ({ added, removed, loaded }) => {
       added.forEach(subdoc => {
-        console.log("added subdoc", subdoc.guid)
         this.subdocuments.set(subdoc.guid, subdoc)
       })
       removed.forEach(subdoc => {
@@ -363,7 +374,6 @@ export class WebsocketProvider extends Observable {
         this.subdocuments.delete(subdoc.guid)
       })
       loaded.forEach(subdoc => {
-        console.log("loaded subdoc", subdoc.guid)
         // always send sync step 1 when connected
         const encoder = encoding.createEncoder()
         encoding.writeVarUint(encoder, messageSubDocSync)
